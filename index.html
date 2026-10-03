@@ -92,7 +92,7 @@
                     <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-slate-700">Verified Analysis</span>
                 </div>
                 
-                <!-- Real Gemini Output -->
+                <!-- AI Output -->
                 <div id="aiOutputText" class="text-sm text-slate-300 space-y-3 leading-relaxed whitespace-pre-line"></div>
 
                 <!-- Paywall Box -->
@@ -208,41 +208,47 @@
             Format with bold headers and concise bullet points. Avoid generating fictional monetary amounts.
             `;
 
-            let targetModelName = null;
+            let modelsToTry = [];
+            let keyError = null;
 
-            // Step 1: Query active supported models dynamically for this key
+            // 1. Discover active models dynamically for this key
             try {
                 const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-                if (listRes.ok) {
-                    const listData = await listRes.json();
-                    if (listData.models && listData.models.length > 0) {
-                        const validModels = listData.models.filter(m => 
-                            m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent")
-                        );
-                        
-                        const flashModel = validModels.find(m => m.name.includes("flash"));
-                        const selected = flashModel || validModels[0];
-                        
-                        if (selected) {
-                            targetModelName = selected.name;
-                        }
+                const listData = await listRes.json();
+
+                if (listRes.ok && listData.models && Array.isArray(listData.models)) {
+                    const valid = listData.models
+                        .filter(m => m.supportedGenerationMethods && m.supportedGenerationMethods.includes("generateContent"))
+                        .map(m => m.name);
+
+                    if (valid.length > 0) {
+                        const flashModels = valid.filter(name => name.includes("flash"));
+                        const otherModels = valid.filter(name => !name.includes("flash"));
+                        modelsToTry = [...flashModels, ...otherModels];
                     }
+                } else if (listData.error) {
+                    keyError = `API Key Error (${listData.error.code}): ${listData.error.message}`;
                 }
             } catch (e) {
-                console.warn("Could not dynamically query models:", e);
+                console.warn("Discovery failed, falling back to static list", e);
             }
 
-            // Step 2: Fallback candidates
-            const candidateModels = targetModelName 
-                ? [targetModelName, "models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"]
-                : ["models/gemini-2.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-flash"];
-
-            const uniqueModels = [...new Set(candidateModels)];
+            // 2. Fallback list if discovery didn't find specific models
+            if (modelsToTry.length === 0 && !keyError) {
+                modelsToTry = [
+                    "models/gemini-2.0-flash",
+                    "models/gemini-2.5-flash",
+                    "models/gemini-2.0-flash-lite",
+                    "models/gemini-1.5-flash-002",
+                    "models/gemini-1.5-pro"
+                ];
+            }
 
             let aiResponse = null;
             let lastError = null;
 
-            for (const modelPath of uniqueModels) {
+            // 3. Try each discovered model
+            for (const modelPath of modelsToTry) {
                 const cleanPath = modelPath.startsWith("models/") ? modelPath : `models/${modelPath}`;
                 
                 try {
@@ -255,7 +261,7 @@
                     const data = await response.json();
 
                     if (data.error) {
-                        lastError = data.error.message || JSON.stringify(data.error);
+                        lastError = `[${cleanPath}] ${data.error.message || JSON.stringify(data.error)}`;
                         continue;
                     }
 
@@ -274,7 +280,8 @@
                 document.getElementById("aiOutputText").innerText = aiResponse;
                 document.getElementById("auditResults").classList.remove("hidden");
             } else {
-                alert("Error connecting to Gemini API: " + (lastError || "Invalid response format or API key permissions."));
+                const errorMsg = keyError || lastError || "Could not connect to Gemini API. Please check your API key.";
+                alert(errorMsg + "\n\nTip: You can generate a free API key at https://aistudio.google.com");
             }
         }
     </script>
