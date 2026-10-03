@@ -6,6 +6,8 @@
     <title>ClaimRadar - Web3 Airdrop & Bounty Checklist</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Marked.js for Markdown Rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -20,6 +22,31 @@
             }
         }
     </script>
+    <style>
+        /* Custom typography for parsed markdown inside results */
+        .markdown-body h1, .markdown-body h2, .markdown-body h3 {
+            color: #10b981;
+            font-weight: 700;
+            margin-top: 1.25rem;
+            margin-bottom: 0.5rem;
+        }
+        .markdown-body h1 { font-size: 1.25rem; }
+        .markdown-body h2 { font-size: 1.1rem; }
+        .markdown-body h3 { font-size: 1rem; }
+        .markdown-body ul {
+            list-style-type: disc;
+            padding-left: 1.25rem;
+            margin-top: 0.5rem;
+            margin-bottom: 0.75rem;
+        }
+        .markdown-body li {
+            margin-bottom: 0.35rem;
+            color: #d1d5db;
+        }
+        .markdown-body strong {
+            color: #ffffff;
+        }
+    </style>
 </head>
 <body class="bg-darkbg text-slate-100 min-h-screen font-sans flex flex-col justify-between">
 
@@ -58,12 +85,12 @@
         <!-- Input Box -->
         <div class="bg-cardbg border border-slate-800 rounded-2xl p-5 shadow-2xl mb-8">
             <label class="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
-                Protocols, Chains, or Handles
+                Protocols, Chains, Wallet Address, or Handles
             </label>
             
             <div class="flex flex-col sm:flex-row gap-3">
                 <input type="text" id="targetInput" 
-                    placeholder="e.g. Arbitrum, Uniswap, Solana, Gitcoin Grant donor, GitHub handle" 
+                    placeholder="e.g. 0x..., Berachain, Monad, Arbitrum, Gitcoin, or GitHub handle" 
                     class="w-full bg-slate-900 border border-slate-700 text-white rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-emerald-500 transition">
                 
                 <button onclick="runAudit()" id="auditBtn" class="bg-emerald-600 hover:bg-emerald-500 text-white font-bold px-6 py-3 rounded-xl flex items-center justify-center gap-2 transition whitespace-nowrap shadow-lg shadow-emerald-900/20">
@@ -78,7 +105,7 @@
             <div class="inline-block animate-spin text-emerald-400 text-3xl mb-3">
                 <i class="fa-solid fa-circle-notch"></i>
             </div>
-            <p class="text-sm font-bold text-white">Analyzing protocol criteria via Gemini AI...</p>
+            <p id="loadingText" class="text-sm font-bold text-white">Analyzing target data via Gemini AI...</p>
         </div>
 
         <!-- Dynamic Results Container -->
@@ -92,8 +119,8 @@
                     <span class="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-md border border-slate-700">Verified Analysis</span>
                 </div>
                 
-                <!-- AI Output -->
-                <div id="aiOutputText" class="text-sm text-slate-300 space-y-3 leading-relaxed whitespace-pre-line"></div>
+                <!-- Rendered Output -->
+                <div id="aiOutputText" class="markdown-body text-sm text-slate-300 leading-relaxed"></div>
 
                 <!-- Paywall Box -->
                 <div class="mt-6 p-5 bg-slate-900 border border-emerald-500/30 rounded-xl text-center">
@@ -189,29 +216,75 @@
             closePaymentModal();
         }
 
+        // Quick on-chain stats fetch for EVM addresses
+        async function fetchEvmStats(address) {
+            try {
+                const rpcRes = await fetch("https://cloudflare-eth.com", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        jsonrpc: "2.0",
+                        id: 1,
+                        method: "eth_getTransactionCount",
+                        params: [address, "latest"]
+                    })
+                });
+                const data = await rpcRes.json();
+                const txCount = data.result ? parseInt(data.result, 16) : 0;
+                return { txCount };
+            } catch (e) {
+                return { txCount: "Unknown" };
+            }
+        }
+
         async function runAudit() {
             const inputVal = document.getElementById("targetInput").value.trim();
             const apiKey = localStorage.getItem("gemini_api_key");
 
-            if(!inputVal) return alert("Please enter protocols or a developer/wallet handle.");
+            if(!inputVal) return alert("Please enter protocols, chains, or an address.");
             if(!apiKey) { openApiKeyModal(); return; }
 
             document.getElementById("auditResults").classList.add("hidden");
             document.getElementById("loadingState").classList.remove("hidden");
 
-            const promptText = `
-            Act as a Web3 ecosystem analyst. The user provided the following protocols or handle: "${inputVal}".
-            Provide a realistic, structured 3-part breakdown:
-            1. Active or historical retroactive airdrop criteria associated with these protocols.
-            2. Ecosystem grant or bug bounty opportunities (e.g., Gitcoin, Immunefi, Layer 2 grants).
-            3. Safety protocols for verifying official claim sites securely.
-            Format with bold headers and concise bullet points. Avoid generating fictional monetary amounts.
-            `;
+            const isAddress = /^0x[a-fA-F0-9]{40}$/.test(inputVal);
+            let promptText = "";
 
+            if (isAddress) {
+                document.getElementById("loadingText").innerText = "Querying Ethereum blockchain RPC & analyzing address...";
+                const stats = await fetchEvmStats(inputVal);
+                
+                promptText = `
+                Act as a specialized Web3 On-Chain Auditor.
+                Analyze this Ethereum Wallet Address: ${inputVal}.
+                On-chain facts retrieved: Executed Outgoing Transactions: ${stats.txCount}.
+
+                Provide a specific, non-generic 3-part report:
+                1. **Wallet Profile & Transaction Tier**: Evaluate if a wallet with ${stats.txCount} transactions is likely considered high-activity, sybil, or normal user across major L2 retroactive distributions (Arbitrum, Linea, Scroll, ZKsync, Base).
+                2. **Recommended Action Items to Boost Eligibility**: List 3 explicit, highly targeted actions this specific address should do right now (e.g. liquidity provision, contract deployments, DAO governance voting on Tally/Snapshot).
+                3. **Active Ecosystem Grant & Bug Bounty Targets**: Name 3 exact platforms/projects currently distributing rewards (e.g. Immunefi, Gitcoin Passport, Optimism Retro Funding).
+
+                Do NOT write generic introduction fluff. Be direct, authoritative, and concise.
+                `;
+            } else {
+                document.getElementById("loadingText").innerText = "Analyzing targeted protocol or developer handle...";
+                promptText = `
+                Act as a Web3 Ecosystem & Airdrop Strategist.
+                Target input provided: "${inputVal}".
+
+                Provide a structured, highly specific 3-part breakdown:
+                1. **Actionable Airdrop & Interactive Tasks**: List step-by-step tasks required for "${inputVal}" (e.g. testnet faucet interactions, mainnet bridging, specific contract roles, or volume targets).
+                2. **Active Ecosystem Grants & Developer Bounties**: List specific grant rounds, GitHub bounty opportunities, or security bounty targets tied to "${inputVal}" or its ecosystem.
+                3. **Verification & Anti-Phishing Rules**: State 3 exact safety rules for interacting with official claim contracts and avoiding fake websites.
+
+                Do NOT give generic answers. Be specific to "${inputVal}". Format cleanly with bold headings and bullet points.
+                `;
+            }
+
+            // Discover and invoke active Gemini models
             let modelsToTry = [];
             let keyError = null;
 
-            // 1. Discover active models dynamically for this key
             try {
                 const listRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
                 const listData = await listRes.json();
@@ -230,15 +303,13 @@
                     keyError = `API Key Error (${listData.error.code}): ${listData.error.message}`;
                 }
             } catch (e) {
-                console.warn("Discovery failed, falling back to static list", e);
+                console.warn("Discovery failed", e);
             }
 
-            // 2. Fallback list if discovery didn't find specific models
             if (modelsToTry.length === 0 && !keyError) {
                 modelsToTry = [
                     "models/gemini-2.0-flash",
                     "models/gemini-2.5-flash",
-                    "models/gemini-2.0-flash-lite",
                     "models/gemini-1.5-flash-002",
                     "models/gemini-1.5-pro"
                 ];
@@ -247,7 +318,6 @@
             let aiResponse = null;
             let lastError = null;
 
-            // 3. Try each discovered model
             for (const modelPath of modelsToTry) {
                 const cleanPath = modelPath.startsWith("models/") ? modelPath : `models/${modelPath}`;
                 
@@ -261,7 +331,7 @@
                     const data = await response.json();
 
                     if (data.error) {
-                        lastError = `[${cleanPath}] ${data.error.message || JSON.stringify(data.error)}`;
+                        lastError = data.error.message;
                         continue;
                     }
 
@@ -277,11 +347,11 @@
             document.getElementById("loadingState").classList.add("hidden");
 
             if (aiResponse) {
-                document.getElementById("aiOutputText").innerText = aiResponse;
+                // Parse markdown into formatted HTML
+                document.getElementById("aiOutputText").innerHTML = marked.parse(aiResponse);
                 document.getElementById("auditResults").classList.remove("hidden");
             } else {
-                const errorMsg = keyError || lastError || "Could not connect to Gemini API. Please check your API key.";
-                alert(errorMsg + "\n\nTip: You can generate a free API key at https://aistudio.google.com");
+                alert("Error generating checklist: " + (keyError || lastError || "Check API Key permissions."));
             }
         }
     </script>
